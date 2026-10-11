@@ -1,9 +1,5 @@
 package main
 
-import (
-	"image-parsing-worker/bootstrap"
-)
+import "image-processing-worker/infrastructure/worker"
 
-func main() {
-	bootstrap.Bootstrap()
-}
+func main() { worker.Main() }
