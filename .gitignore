@@ -1,0 +1,5 @@
+.env
+.idea/
+payload.json
+coverage.out
+*.test
