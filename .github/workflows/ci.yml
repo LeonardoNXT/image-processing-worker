@@ -1,0 +1,138 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: Quality and build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: go.sum
+
+      - name: Verify modules
+        run: |
+          go mod download
+          go mod verify
+          go mod tidy
+          git diff --exit-code -- go.mod go.sum
+
+      - name: Verify formatting
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: Run vet
+        run: go vet ./...
+
+      - name: Build worker
+        run: CGO_ENABLED=0 go build -trimpath -o image-processing-worker ./cmd/worker
+
+  tests:
+    name: Tests with ImageMagick 7
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      APPIMAGE_EXTRACT_AND_RUN: "1"
+      IMAGEMAGICK_VERSION: 7.1.2-33
+      IMAGEMAGICK_SHA256: af598b07ab4dd8b8123623602dc9fc69d5e32185a36fd3739795a0deb02c1fb7
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: go.sum
+
+      - name: Install ImageMagick
+        run: |
+          url="https://github.com/ImageMagick/ImageMagick/releases/download/${IMAGEMAGICK_VERSION}/ImageMagick-${IMAGEMAGICK_VERSION}-gcc-x86_64.AppImage"
+          curl --fail --location --silent --show-error "$url" --output "$RUNNER_TEMP/magick"
+          echo "${IMAGEMAGICK_SHA256}  ${RUNNER_TEMP}/magick" | sha256sum --check --strict
+          chmod +x "$RUNNER_TEMP/magick"
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+
+      - name: Verify ImageMagick delegates
+        run: |
+          version="$(magick -version)"
+          echo "$version"
+          echo "$version" | grep --quiet 'Version: ImageMagick 7\.'
+          for delegate in jpeg png webp; do
+            echo "$version" | grep --quiet -E "Delegates.*(^|[[:space:]])${delegate}([[:space:]]|$)"
+          done
+
+      - name: Run tests
+        run: |
+          set -o pipefail
+          go test -race -shuffle=on -count=1 -covermode=atomic -coverprofile=coverage.out -v ./... 2>&1 | tee test.log
+          if grep --quiet 'ImageMagick 7 unavailable' test.log; then
+            echo 'ImageMagick tests were skipped'
+            exit 1
+          fi
+
+      - name: Report coverage
+        run: |
+          go tool cover -func=coverage.out | tee coverage.txt
+          {
+            echo '### Go coverage'
+            echo '```text'
+            tail -n 1 coverage.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-reports
+          path: |
+            coverage.out
+            coverage.txt
+            test.log
+          if-no-files-found: ignore
+          retention-days: 14
+
+  vulnerabilities:
+    name: Vulnerability scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Run govulncheck
+        uses: golang/govulncheck-action@v1
+        with:
+          go-version-file: go.mod
+          go-package: ./...
+          repo-checkout: false

@@ -26,6 +26,14 @@ go test ./...
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run-worker.ps1
 ```
 
+## Integração contínua
+
+O workflow `.github/workflows/ci.yml` executa em pushes, pull requests e sob
+demanda. Ele valida módulos e formatação, executa `go vet`, compila o worker,
+roda os testes com race detector e ImageMagick 7 real, gera o relatório de
+cobertura e verifica vulnerabilidades conhecidas com `govulncheck`. Não há
+etapas de publicação ou deploy.
+
 Os testes de conversão usam o `magick` do PATH e são pulados caso ele não exista.
 Para produção, configure supervisão com backoff de reinicialização: falhas de
 infraestrutura encerram o consumer sem confirmar o registro problemático.

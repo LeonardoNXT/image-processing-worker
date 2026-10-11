@@ -2,4 +2,7 @@
 .idea/
 payload.json
 coverage.out
+coverage.txt
+test.log
+image-processing-worker
 *.test
